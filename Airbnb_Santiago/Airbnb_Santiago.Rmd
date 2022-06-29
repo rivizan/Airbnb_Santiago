@@ -1,0 +1,340 @@
+---
+title: "Tarea 3 Airbnb Santiago"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    runtime: shiny
+    theme: simplex
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(dplyr)
+library(leaflet)
+library(stringr)
+library(highcharter)
+library(tidyr)
+```
+
+```{r}
+library(readr)
+listings <- read_csv("listings.csv",
+  col_types = cols(price = col_number())
+)
+```
+
+
+```{r}
+listings2 <- listings %>% select(name, listing_url, neighbourhood_cleansed, latitude, longitude, room_type, price, number_of_reviews, review_scores_rating)
+```
+```{r cho=T, results='hide'}
+quantile(x = listings2$price, probs = c(0.025, 0.975))
+listings2 <- listings2 %>% filter(price > 8575, price < 241908)
+```
+```{r}
+listings2 <- listings2 %>% mutate(room_type = recode(room_type,
+  "Entire home/apt" = "Casa/dpto completo",
+  "Private room" = "Pieza privada",
+  "Hotel room" = "Hotel",
+  "Shared room" = "Pieza compartida"
+))
+```
+
+```{r}
+library(tidyr)
+listings3 <- listings2 %>%
+  select(neighbourhood_cleansed, latitude, longitude, room_type) %>%
+  group_by(neighbourhood_cleansed, room_type) %>%
+  count()
+listings4 <- listings3 %>% spread(neighbourhood_cleansed, n)
+listings4[is.na(listings4)] <- 0
+listings4$`Gran Santiago` <- rowSums(listings4[, 2:33])
+Todos <- colSums(listings4[, -1])
+listings4 <- rbind(listings4, Todos)
+listings4$room_type[5] <- "Todos"
+listings4 <- listings4 %>% gather(key = "comuna", value = "n", 2:34)
+```
+
+```{r}
+listings4 <- listings4 %>% ungroup()
+
+# Aquí para clasificar
+comunas <- listings4 %>%
+  select(2) %>%
+  unique()
+
+arriendo <- listings4 %>%
+  select(1) %>%
+  unique()
+```
+
+```{r}
+listings5 <- listings2 %>%
+  select(neighbourhood_cleansed, review_scores_rating, room_type) %>%
+  group_by(neighbourhood_cleansed, room_type) %>%
+  summarise_at(vars(review_scores_rating), funs(mean(., na.rm = TRUE)))
+
+listings6 <- listings5 %>% spread(neighbourhood_cleansed, review_scores_rating)
+listings6[is.na(listings6)] <- NA
+
+
+listings6$`Gran Santiago` <- rowMeans(listings6[, 2:33], na.rm = T)
+Todos <- colMeans(listings6[, -1], na.rm = T)
+listings6 <- rbind(listings6, Todos)
+listings6$room_type[5] <- "Todos"
+listings6 <- listings6 %>% gather(key = "comuna", value = "n", 2:34)
+```
+```{r}
+listings6 <- listings6 %>% ungroup()
+```
+Listado
+================================
+
+Sidebar {data-width=200 .sidebar}
+-----------------------------------------------------------------------
+
+### Filtros
+
+<font size="2">Seleccione la comuna y el tipo de arriendo que desea analizar.
+
+```{r}
+selectInput("TComunas", "Comuna", choices = comunas$comuna, selected = "Gran Santiago")
+```
+
+```{r}
+selectInput("Tipo", "Tipo de Arriendo", choices = arriendo$room_type, selected = "Todos")
+```
+
+Nota: La base de datos AirBnb fue obtenida de <https://insideairbnb.com>. Se eliminaron las observaciones cuyo precio se encontraba sobre el percentil 97,5 y bajo el percentil 2,5. </font>
+
+Row {}
+-------------------------------------
+
+### Chart1
+
+```{r}
+
+D1 <- reactive({
+  f <- listings4 %>%
+    filter(comuna == input$TComunas) %>%
+    select(comuna) %>%
+    unique()
+  f
+})
+
+renderValueBox({
+  valueBox(D1(), caption = "Localidad", icon = "fa-map-marker-alt")
+})
+```
+
+
+### Chart2
+
+```{r}
+D2 <- reactive({
+  f <- listings4 %>%
+    filter(comuna == input$TComunas) %>%
+    filter(room_type == input$Tipo) %>%
+    select(n)
+  f
+})
+
+renderValueBox({
+  valueBox(D2(), caption = "Anuncios", icon = "fa-home")
+})
+```
+
+### Chart3
+
+```{r}
+D3 <- reactive({
+  f <- listings6 %>%
+    filter(comuna == input$TComunas) %>%
+    filter(room_type == input$Tipo) %>%
+    select(n)
+  paste0(round(f, 2), "%")
+})
+
+renderValueBox({
+  valueBox(D3(), caption = "Valoración Promedio", icon = "fa-star")
+})
+```
+
+Row {data-width=400}
+-------------------------------------
+
+```{r}
+listings2$review_scores_rating[is.na(listings2$review_scores_rating)] <- 0
+```
+
+```{r}
+renderLeaflet({ # apertura render
+
+  if (input$Tipo == "Todos") { # apertura if grande
+
+    if (input$TComunas == "Gran Santiago") { # apertura primer if chico
+
+      listings2 %>%
+        leaflet() %>%
+        addTiles() %>%
+        addMarkers(
+          lng = ~longitude,
+          lat = ~latitude,
+          clusterOptions = markerClusterOptions(),
+          popup = ~ paste(
+            "<b><a href='",
+            listing_url,
+            "' target='_blank'>",
+            name,
+            "<br>",
+            "</a></b", "<br>",
+            room_type, "<br>",
+            "Precio: $",
+            price,
+            "<br>",
+            "Rating:",
+            number_of_reviews,
+            "<br>",
+            "Reviews:",
+            review_scores_rating,
+            "<br>",
+            ""
+          )
+        )
+    } else { # cierre primer if chico + apertura primer else chico
+      listings2 %>%
+        filter(listings2$neighbourhood_cleansed == input$TComunas) %>%
+        leaflet() %>%
+        addTiles() %>%
+        addMarkers(
+          lng = ~longitude,
+          lat = ~latitude,
+          clusterOptions = markerClusterOptions(),
+          popup = ~ paste(
+            "<b><a href='",
+            listing_url,
+            "' target='_blank'>",
+            name,
+            "<br>",
+            "</a></b", "<br>",
+            room_type, "<br>",
+            "Precio: $",
+            price,
+            "<br>",
+            "Rating:",
+            number_of_reviews,
+            "<br>",
+            "Reviews:",
+            review_scores_rating,
+            "<br>",
+            ""
+          )
+        )
+    } # cierre primer else chico
+  } else { # cierre if grande + apertura else grande
+
+    if (input$TComunas == "Gran Santiago") { # apertura segundo if chico
+
+      listings2 %>%
+        filter(listings2$room_type == input$Tipo) %>%
+        leaflet() %>%
+        addTiles() %>%
+        addMarkers(
+          lng = ~longitude,
+          lat = ~latitude,
+          clusterOptions = markerClusterOptions(),
+          popup = ~ paste(
+            "<b><a href='",
+            listing_url,
+            "' target='_blank'>",
+            name,
+            "<br>",
+            "</a></b", "<br>",
+            room_type, "<br>",
+            "Precio: $",
+            price,
+            "<br>",
+            "Rating:",
+            number_of_reviews,
+            "<br>",
+            "Reviews:",
+            review_scores_rating,
+            "<br>",
+            ""
+          )
+        )
+    } else { # cierre segundo if chico + apertura segundo else chico
+      listings2 %>%
+        filter(listings2$neighbourhood_cleansed == input$TComunas & listings2$room_type == input$Tipo) %>%
+        leaflet() %>%
+        addTiles() %>%
+        addMarkers(
+          lng = ~longitude,
+          lat = ~latitude,
+          clusterOptions = markerClusterOptions(),
+          popup = ~ paste(
+            "<b><a href='",
+            listing_url,
+            "' target='_blank'>",
+            name,
+            "<br>",
+            "</a></b", "<br>",
+            room_type, "<br>",
+            "Precio: $",
+            price,
+            "<br>",
+            "Rating:",
+            number_of_reviews,
+            "<br>",
+            "Reviews:",
+            review_scores_rating,
+            "<br>",
+            ""
+          )
+        )
+    } # cierre segundo else chico
+  } # cierre else grande
+}) # cierre render
+```
+
+
+```{r}
+
+renderHighchart({
+  if (input$Tipo == "Todos") {
+    if (input$TComunas == "Gran Santiago") {
+      hchart(listings2$price, color = "#B71C1C") %>%
+        hc_xAxis(title = list(text = "Precio")) %>%
+        hc_legend(enabled = FALSE) %>%
+        hc_title(text = paste0("Precios en ", input$TComunas)) %>%
+        hc_subtitle(text = paste0("Categoría:", input$Tipo)) %>%
+        hc_add_theme(hc_theme_elementary())
+    } else {
+      hchart(listings2$price[listings2$neighbourhood_cleansed == input$TComunas], color = "#B71C1C") %>%
+        hc_xAxis(title = list(text = "Precio")) %>%
+        hc_legend(enabled = FALSE) %>%
+        hc_title(text = paste0("Precios en ", input$TComunas)) %>%
+        hc_subtitle(text = paste0("Categoría:", input$Tipo)) %>%
+        hc_add_theme(hc_theme_elementary())
+    }
+  } else {
+    if (input$TComunas == "Gran Santiago") {
+      hchart(listings2$price[listings2$room_type == input$Tipo], color = "#B71C1C") %>%
+        hc_xAxis(title = list(text = "Precio")) %>%
+        hc_legend(enabled = FALSE) %>%
+        hc_title(text = paste0("Precios en ", input$TComunas)) %>%
+        hc_subtitle(text = paste0("Categoría:", input$Tipo)) %>%
+        hc_add_theme(hc_theme_elementary())
+    } else {
+      hchart(listings2$price[listings2$neighbourhood_cleansed == input$TComunas & listings2$room_type == input$Tipo], color = "#B71C1C") %>%
+        hc_xAxis(title = list(text = "Precio")) %>%
+        hc_legend(enabled = FALSE) %>%
+        hc_title(text = paste0("Precios en ", input$TComunas)) %>%
+        hc_subtitle(text = paste0("Categoría:", input$Tipo)) %>%
+        hc_add_theme(hc_theme_elementary())
+    }
+  }
+})
+```
+
